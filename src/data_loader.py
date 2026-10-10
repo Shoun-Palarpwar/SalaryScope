@@ -33,6 +33,47 @@ ROLE_PARAMS = {
 RANDOM_SEED = 42
 
 
+def validate_dataset(df: pd.DataFrame, minimum_rows: int = 10) -> pd.DataFrame:
+    """Validate and normalize an input salary dataset."""
+    required = {"Experience", "Role", "Salary"}
+    missing_columns = required.difference(df.columns)
+    if missing_columns:
+        raise ValueError(f"Dataset is missing required columns: {sorted(missing_columns)}")
+    if len(df) < minimum_rows:
+        raise ValueError(f"Dataset must contain at least {minimum_rows} rows.")
+
+    validated = df[["Experience", "Role", "Salary"]].copy()
+    for column in ("Experience", "Salary"):
+        try:
+            validated[column] = pd.to_numeric(validated[column], errors="raise")
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Column '{column}' must contain numeric values.") from exc
+
+    if validated["Role"].isna().any():
+        raise ValueError("Column 'Role' cannot contain missing values.")
+    unknown_roles = sorted(set(validated["Role"]) - set(ROLE_PARAMS))
+    if unknown_roles:
+        raise ValueError(f"Dataset contains unsupported roles: {unknown_roles}")
+    if (validated["Experience"].dropna() < 0).any():
+        raise ValueError("Experience cannot be negative.")
+    if not np.isfinite(validated["Experience"].dropna()).all():
+        raise ValueError("Experience must contain finite values.")
+    if (validated["Salary"].dropna() <= 0).any():
+        raise ValueError("Salary must be greater than zero.")
+    if not np.isfinite(validated["Salary"].dropna()).all():
+        raise ValueError("Salary must contain finite values.")
+    if validated["Salary"].notna().sum() < minimum_rows:
+        raise ValueError(f"Dataset must contain at least {minimum_rows} labeled salaries.")
+    labeled_role_counts = validated.loc[validated["Salary"].notna(), "Role"].value_counts()
+    insufficient_roles = [role for role in ROLE_PARAMS if labeled_role_counts.get(role, 0) < 2]
+    if insufficient_roles:
+        raise ValueError(
+            "Each role needs at least two labeled rows; insufficient roles: "
+            f"{insufficient_roles}"
+        )
+    return validated
+
+
 def generate_synthetic_dataset(n_rows: int = 1000, missing_frac: float = 0.05,
                                 seed: int = RANDOM_SEED) -> pd.DataFrame:
     """
@@ -52,6 +93,11 @@ def generate_synthetic_dataset(n_rows: int = 1000, missing_frac: float = 0.05,
     -------
     pd.DataFrame with columns: Experience, Role, Salary
     """
+    if n_rows < 10:
+        raise ValueError("n_rows must be at least 10.")
+    if not 0 <= missing_frac < 1:
+        raise ValueError("missing_frac must be in the range [0, 1).")
+
     rng = np.random.default_rng(seed)
     roles = list(ROLE_PARAMS.keys())
 
@@ -107,7 +153,7 @@ def load_dataset(csv_path: str = "data/salaries.csv", n_rows: int = 1000,
     path = Path(csv_path)
 
     if path.exists() and not force_regenerate:
-        df = pd.read_csv(path)
+        df = validate_dataset(pd.read_csv(path))
         print(f"[data_loader] Loaded existing dataset from '{path}' ({len(df)} rows).")
         return df
 
@@ -118,7 +164,7 @@ def load_dataset(csv_path: str = "data/salaries.csv", n_rows: int = 1000,
     df.to_csv(path, index=False)
     print(f"[data_loader] Saved dataset to '{path}'.")
 
-    return df
+    return validate_dataset(df)
 
 
 if __name__ == "__main__":

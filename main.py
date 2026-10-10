@@ -5,27 +5,29 @@ Single entry point for the SalaryScope salary prediction pipeline.
 
 Running this script will:
     1. Load (or generate) the dataset at data/salaries.csv
-    2. Preprocess it (impute missing values, one-hot encode Role)
+    2. Remove rows with missing target salaries
     3. Split into train (80%) / test (20%) sets
-    4. Train a Linear Regression model
-    5. Evaluate it (R^2, MAE, RMSE) and print a report
+    4. Fit preprocessing on training data and train Linear Regression
+    5. Evaluate it against a baseline and with cross-validation
     6. Save the trained model + preprocessing artifacts to models/
     7. Run a few example predictions to demonstrate predict.py
 
 Usage
 -----
-    python main.py
-    python main.py --rows 2000          # generate a larger synthetic dataset
-    python main.py --regenerate-data    # force-regenerate data/salaries.csv
+    python3 main.py
+    python3 main.py --rows 2000          # generate a larger synthetic dataset
+    python3 main.py --regenerate-data    # force-regenerate data/salaries.csv
 """
 
 import argparse
+from pathlib import Path
 
 from src.train import train_model
 from src.predict import predict_salary, load_trained_artifacts
 from src.data_loader import load_dataset
 
-DATA_PATH = "data/salaries.csv"
+PROJECT_ROOT = Path(__file__).resolve().parent
+DATA_PATH = PROJECT_ROOT / "data" / "salaries.csv"
 
 
 def print_header(title: str):
@@ -38,7 +40,7 @@ def run_pipeline(n_rows: int = 1000, regenerate_data: bool = False):
     print_header("SALARYSCOPE SALARY PREDICTION PIPELINE")
 
     if regenerate_data:
-        load_dataset(csv_path=DATA_PATH, n_rows=n_rows, force_regenerate=True)
+        load_dataset(csv_path=str(DATA_PATH), n_rows=n_rows, force_regenerate=True)
 
     print_header("STEP 1-5: TRAIN & EVALUATE MODEL")
     metrics = train_model(csv_path=DATA_PATH, n_rows=n_rows)
@@ -61,7 +63,7 @@ def run_pipeline(n_rows: int = 1000, regenerate_data: bool = False):
     print(f"Final Test MAE       : ${metrics['mae']:,.2f}")
     print(f"Final Test RMSE      : ${metrics['rmse']:,.2f}")
     print("\nModel and artifacts saved under ./models/")
-    print("Run `python src/predict.py --experience 6 --role Senior` for a one-off prediction.\n")
+    print("Run `python3 src/predict.py --experience 6 --role Senior` for a one-off prediction.\n")
 
 
 def _parse_args():

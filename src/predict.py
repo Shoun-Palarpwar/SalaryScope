@@ -28,11 +28,46 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.preprocess import transform_features
 
-MODEL_DIR = Path("models")
+MODEL_DIR = _PROJECT_ROOT / "models"
 MODEL_PATH = MODEL_DIR / "salary_model.joblib"
 ARTIFACTS_PATH = MODEL_DIR / "preprocess_artifacts.joblib"
 
 VALID_ROLES = ["Junior", "Mid", "Senior", "Lead"]
+
+
+def _validate_prediction_records(df: pd.DataFrame, artifacts=None) -> pd.DataFrame:
+    """Return validated prediction inputs with consistent column types."""
+    if df.empty:
+        raise ValueError("At least one prediction record is required.")
+    missing = {"Experience", "Role"}.difference(df.columns)
+    if missing:
+        raise ValueError(f"Prediction records are missing fields: {sorted(missing)}")
+
+    validated = df.copy()
+    try:
+        validated["Experience"] = pd.to_numeric(validated["Experience"], errors="raise")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Experience must be numeric.") from exc
+
+    invalid_roles = sorted(set(validated["Role"].dropna()) - set(VALID_ROLES))
+    if validated["Role"].isna().any() or invalid_roles:
+        raise ValueError(f"Role must be one of {VALID_ROLES}; invalid values: {invalid_roles}")
+    if validated["Experience"].isna().any():
+        raise ValueError("Experience cannot be missing.")
+    if (~validated["Experience"].map(lambda value: float("-inf") < value < float("inf"))).any():
+        raise ValueError("Experience must be finite.")
+    if (validated["Experience"] < 0).any():
+        raise ValueError("Experience cannot be negative.")
+
+    if artifacts is not None:
+        for index, row in validated.iterrows():
+            low, high = artifacts.role_experience_ranges[row["Role"]]
+            if not low <= row["Experience"] <= high:
+                raise ValueError(
+                    f"Experience for {row['Role']} must be within the training "
+                    f"range {low:.1f}-{high:.1f} years; got {row['Experience']}."
+                )
+    return validated
 
 
 def load_trained_artifacts():
@@ -65,13 +100,12 @@ def predict_salary(experience: float, role: str, model=None, artifacts=None) -> 
     -------
     float - predicted annual salary in USD.
     """
-    if role not in VALID_ROLES:
-        raise ValueError(f"Role must be one of {VALID_ROLES}, got '{role}'.")
-
     if model is None or artifacts is None:
         model, artifacts = load_trained_artifacts()
 
-    df = pd.DataFrame([{"Experience": experience, "Role": role}])
+    df = _validate_prediction_records(
+        pd.DataFrame([{"Experience": experience, "Role": role}]), artifacts
+    )
     X = transform_features(df, artifacts)
     prediction = model.predict(X)[0]
 
@@ -93,7 +127,7 @@ def predict_batch(records: list, model=None, artifacts=None) -> pd.DataFrame:
     if model is None or artifacts is None:
         model, artifacts = load_trained_artifacts()
 
-    df = pd.DataFrame(records)
+    df = _validate_prediction_records(pd.DataFrame(records), artifacts)
     X = transform_features(df, artifacts)
     df["PredictedSalary"] = model.predict(X)
     return df

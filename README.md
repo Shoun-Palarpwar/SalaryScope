@@ -1,176 +1,142 @@
-# SalaryScope
+# SalaryScope: Employee Salary Prediction System
 
-SalaryScope is an end-to-end machine learning project that predicts employee
-salaries from **years of experience** and **job role** using a `scikit-learn`
-Linear Regression model.
+SalaryScope is an academic, end-to-end machine-learning project that predicts
+annual employee salary from years of experience and job role. It demonstrates
+data validation, leakage-free preprocessing, regression modeling, evaluation,
+artifact persistence, and reusable inference.
 
+```text
+Experience + Role -> Preprocessing + interactions -> Linear regression -> Salary
 ```
-Experience + Role  ─────►  Linear Regression  ─────►  Predicted Salary
-```
 
-## Project Structure
+## Project structure
 
-```
-SalaryScope/
-├── data/
-│   └── salaries.csv          # Dataset (auto-generated on first run if missing)
-├── src/
-│   ├── __init__.py
-│   ├── data_loader.py        # Loads/generates the dataset
-│   ├── preprocess.py         # Missing-value imputation + one-hot encoding
-│   ├── train.py               # Train/test split, model training, evaluation
-│   └── predict.py            # Load trained model & predict on new inputs
-├── models/                   # Created after training: model + artifacts + metrics
+```text
+salary_project/
+├── data/salaries.csv
+├── models/
 │   ├── salary_model.joblib
 │   ├── preprocess_artifacts.joblib
 │   └── metrics.json
-├── main.py                   # Single entry point — runs the full pipeline
-├── requirements.txt
-└── README.md
+├── src/
+│   ├── data_loader.py
+│   ├── preprocess.py
+│   ├── train.py
+│   └── predict.py
+├── tests/test_pipeline.py
+├── main.py
+└── requirements.txt
 ```
 
 ## Dataset
 
-`data/salaries.csv` contains three columns:
+The included synthetic dataset has the following fields:
 
-| Column       | Type    | Description                                  |
-|--------------|---------|-----------------------------------------------|
-| `Experience` | float   | Years of professional experience              |
-| `Role`       | string  | One of: `Junior`, `Mid`, `Senior`, `Lead`      |
-| `Salary`     | float   | Annual salary in USD (target variable)        |
+| Column | Description |
+|---|---|
+| `Experience` | Years of professional experience |
+| `Role` | `Junior`, `Mid`, `Senior`, or `Lead` |
+| `Salary` | Annual salary in USD—the prediction target |
 
-If the file doesn't already exist, `main.py` / `src/data_loader.py` will
-generate a **realistic 1,000-row synthetic dataset** on first run, with each
-role having a distinct base salary and growth-per-year-of-experience, plus
-Gaussian noise. ~5% of `Experience` values and ~5% of `Salary` values are
-intentionally set to missing (`NaN`) to exercise the preprocessing step, just
-like real-world HR data.
+If the CSV does not exist, the project generates a reproducible dataset. Each
+role has its own base salary, experience range, and salary-growth rate. Gaussian
+noise and missing values are included to imitate imperfect real data.
 
-You can drop in your own real dataset at `data/salaries.csv` (same three
-columns) and the pipeline will use it instead of generating synthetic data.
+The loader validates replacement datasets before training. Rows without a
+salary are excluded because a missing target is not a known training label.
+Missing experience is median-imputed using the training data only.
 
-## Setup
+## Modeling methodology
 
-**Requirements:** Python 3.9+
+1. Validate the raw dataset.
+2. Remove rows whose target salary is missing.
+3. Create a role-stratified 80/20 train/test split.
+4. Fit the experience imputer and role encoder on the training split only.
+5. One-hot encode roles, using `Junior` as the reference category.
+6. Add `Experience × Role` interactions so each role can have a distinct slope.
+7. Train a linear regression model.
+8. Compare it with a mean-prediction baseline.
+9. Report held-out, per-role, and five-fold cross-validation metrics.
+10. Save the model, preprocessing artifacts, and evaluation results.
+
+This order prevents test-set information from leaking into preprocessing.
+
+## Setup and usage
+
+Requires Python 3.9 or newer.
 
 ```bash
-# 1. (Recommended) create a virtual environment
 python3 -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-
-# 2. Install dependencies
+source .venv/bin/activate
 pip install -r requirements.txt
+python3 main.py
 ```
 
-## Running the Pipeline
-
-Run everything — data loading, preprocessing, training, evaluation, and a
-few demo predictions — with a single command from the project root:
+Optional data-generation arguments:
 
 ```bash
-python main.py
+python3 main.py --rows 2000
+python3 main.py --regenerate-data
 ```
 
-Optional flags:
+Make a single prediction after training:
 
 ```bash
-python main.py --rows 2000            # generate a larger synthetic dataset (only if data/salaries.csv doesn't exist)
-python main.py --regenerate-data      # force-regenerate data/salaries.csv, overwriting any existing file
+python3 src/predict.py --experience 6 --role Senior
 ```
 
-### What happens when you run it
-
-1. **Load data** — reads `data/salaries.csv`, generating it first if it doesn't exist.
-2. **Preprocess** — imputes missing `Experience`/`Salary` values with the column median, and one-hot encodes `Role`.
-3. **Split** — 80% train / 20% test, with a fixed random seed for reproducibility.
-4. **Train** — fits a `LinearRegression` model on the training set.
-5. **Evaluate** — computes **R² Score**, **MAE**, and **RMSE** on the held-out test set and prints the learned coefficients.
-6. **Persist** — saves the trained model, preprocessing artifacts, and metrics to `models/`.
-7. **Demo predictions** — runs a few example predictions across all four roles.
-
-### Example output
-
-```
-[train] === Test Set Performance ===
-    R^2 Score : 0.9408
-    MAE       : $6,690.50
-    RMSE      : $11,595.13
-
-[train] === Learned Coefficients ===
-    Experience     : 3,167.03
-    Role_Junior    : -48,676.78
-    Role_Mid       : -27,347.19
-    Role_Senior    : 10,081.84
-    Role_Lead      : 65,942.12
-    Intercept      : 92,906.32
-```
-
-## Making Individual Predictions
-
-Once the model has been trained (i.e. after running `main.py` at least once),
-you can predict a salary for a single employee without retraining:
-
-```bash
-python src/predict.py --experience 6 --role Senior
-```
-
-```
-Predicted salary for a Senior with 6.0 years of experience:
-    $121,990.31
-```
-
-Or use it as a library from your own Python code:
+Library usage:
 
 ```python
-from src.predict import predict_salary
+from src.predict import predict_batch, predict_salary
 
 salary = predict_salary(experience=6, role="Senior")
-print(salary)   # 121990.31
-```
 
-For batch predictions on multiple records at once, use `predict_batch`:
-
-```python
-from src.predict import predict_batch
-
-records = [
+results = predict_batch([
     {"Experience": 1, "Role": "Junior"},
     {"Experience": 10, "Role": "Lead"},
-]
-df = predict_batch(records)
-print(df)
+])
 ```
 
-## Re-training on New Data
+Prediction inputs are validated for required fields, supported roles, finite
+numeric experience, and each role's observed training range. This prevents
+silent extrapolation into unsupported scenarios.
 
-Replace `data/salaries.csv` with your own data (same `Experience`, `Role`,
-`Salary` columns) and re-run:
+## Current results
+
+On the included 1,000-row dataset, the current held-out test result is:
+
+| Metric | Model | Mean baseline |
+|---|---:|---:|
+| R² | 0.9845 | -0.0000 |
+| MAE | $4,299.78 | $41,781.58 |
+| RMSE | $6,417.27 | $51,503.71 |
+
+Exact metrics, including per-role and cross-validation results, are stored in
+`models/metrics.json` after training. Because the data is synthetic, these
+scores demonstrate pipeline behavior rather than real-world salary accuracy.
+
+## Tests
+
+The test suite uses Python's standard library and requires no separate test
+runner:
 
 ```bash
-python main.py
+python3 -m unittest discover -s tests -v
 ```
 
-This retrains the model on the new data and overwrites the saved model,
-preprocessing artifacts, and metrics in `models/`.
+It covers deterministic data generation, schema validation, removal of missing
+targets, train-fitted imputation, interaction features, invalid prediction
+inputs, and single/batch inference.
 
-## Notes on Design Choices
+## Future academic work
 
-- **Median imputation** is used for both `Experience` and `Salary` because
-  it's robust to outliers compared to mean imputation, and works well for
-  the roughly-linear salary distributions in this dataset.
-- **One-hot encoding** (rather than label/ordinal encoding) is used for
-  `Role` because job levels aren't necessarily evenly spaced in salary
-  impact — one-hot encoding lets the model learn a separate coefficient
-  for each role without assuming equal spacing.
-- Preprocessing is **fit once on the training data path and reused**
-  (via `models/preprocess_artifacts.joblib`) so that predictions on new,
-  unseen data are transformed identically to how the model was trained —
-  a common production requirement to avoid train/serve skew.
-- A fixed `random_state=42` is used throughout for reproducible results.
+- Add actual-versus-predicted and residual plots.
+- Compare the interaction model with Ridge, Random Forest, and Gradient Boosting.
+- Add real or publicly available salary data with suitable ethical safeguards.
+- Explore additional features such as location, education, skills, and company size.
+- Report prediction intervals and study model uncertainty.
+- Evaluate errors across relevant groups before drawing compensation conclusions.
 
-## Extending This Project
-
-- Swap `LinearRegression` for `RandomForestRegressor` or `GradientBoostingRegressor` in `src/train.py` for non-linear relationships.
-- Add more features (e.g. `Location`, `Education`, `CompanySize`) to `data_loader.py`, `preprocess.py`, and `predict.py`.
-- Wrap `predict.py` in a REST API (e.g. FastAPI/Flask) for real-time inference.
-- Add unit tests (`pytest`) covering `preprocess.py` and `predict.py`.
+SalaryScope is intended for learning and experimentation, not for making real
+employment or compensation decisions.

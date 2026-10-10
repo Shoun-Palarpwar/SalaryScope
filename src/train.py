@@ -1,35 +1,24 @@
-"""
-train.py
-========
-Trains a Linear Regression model to predict Salary from Experience
-and Role, evaluates it on a held-out test set, and persists both the
-trained model and the fitted preprocessing artifacts to disk so
-`predict.py` can reuse them later without retraining.
-"""
+"""Train, evaluate, and persist the employee salary regression model."""
 
+import json
 import sys
 from pathlib import Path
-import json
 
 import joblib
 import numpy as np
+from sklearn.dummy import DummyRegressor
 from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import StratifiedKFold, train_test_split
 
-# Ensure the project root is on sys.path so `src.*` always resolves to the
-# same module path (e.g. "src.preprocess"), whether this file is run as
-# `python main.py`, `python -m src.train`, or directly as `python src/train.py`.
-# This matters for joblib/pickle, which stores the module path of any custom
-# classes (like PreprocessArtifacts) and needs it to match at load time.
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.preprocess import preprocess_data
 from src.data_loader import load_dataset
+from src.preprocess import build_preprocessor, transform_features
 
-MODEL_DIR = Path("models")
+MODEL_DIR = PROJECT_ROOT / "models"
 MODEL_PATH = MODEL_DIR / "salary_model.joblib"
 ARTIFACTS_PATH = MODEL_DIR / "preprocess_artifacts.joblib"
 METRICS_PATH = MODEL_DIR / "metrics.json"
@@ -38,64 +27,110 @@ TEST_SIZE = 0.2
 RANDOM_STATE = 42
 
 
-def evaluate_model(model, X_test, y_test) -> dict:
-    """Compute R^2, MAE, and RMSE on the test set."""
-    y_pred = model.predict(X_test)
-
-    r2 = r2_score(y_test, y_pred)
-    mae = mean_absolute_error(y_test, y_pred)
-    rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
-
-    return {"r2_score": r2, "mae": mae, "rmse": rmse}
+def _regression_metrics(y_true, y_pred) -> dict[str, float]:
+    return {
+        "r2_score": float(r2_score(y_true, y_pred)),
+        "mae": float(mean_absolute_error(y_true, y_pred)),
+        "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
+    }
 
 
-def train_model(csv_path: str = "data/salaries.csv", n_rows: int = 1000) -> dict:
-    """
-    End-to-end training routine:
-        1. Load raw data
-        2. Preprocess (impute + encode)
-        3. Split 80/20 train/test
-        4. Fit LinearRegression
-        5. Evaluate on the test set
-        6. Persist model + preprocessing artifacts + metrics to models/
+def cross_validate_model(labeled_df) -> dict[str, dict[str, float]]:
+    """Run role-stratified CV with preprocessing refitted inside every fold."""
+    n_splits = min(5, int(labeled_df["Role"].value_counts().min()))
+    if n_splits < 2:
+        raise ValueError("Each represented role needs at least two labeled rows.")
 
-    Returns the metrics dict.
-    """
-    raw_df = load_dataset(csv_path=csv_path, n_rows=n_rows)
-    X, y, artifacts = preprocess_data(raw_df)
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE
+    splitter = StratifiedKFold(
+        n_splits=n_splits, shuffle=True, random_state=RANDOM_STATE
     )
-    print(f"[train] Train set: {X_train.shape[0]} rows | Test set: {X_test.shape[0]} rows")
+    fold_metrics = []
+    for train_indices, test_indices in splitter.split(labeled_df, labeled_df["Role"]):
+        fold_train = labeled_df.iloc[train_indices]
+        fold_test = labeled_df.iloc[test_indices]
+        fold_artifacts = build_preprocessor(fold_train)
+        fold_X_train = transform_features(fold_train, fold_artifacts)
+        fold_X_test = transform_features(fold_test, fold_artifacts)
+        fold_model = LinearRegression().fit(fold_X_train, fold_train["Salary"])
+        fold_metrics.append(
+            _regression_metrics(
+                fold_test["Salary"], fold_model.predict(fold_X_test)
+            )
+        )
 
-    model = LinearRegression()
-    model.fit(X_train, y_train)
-    print("[train] Model trained.")
+    summary = {"folds": n_splits}
+    for metric_name in ("r2_score", "mae", "rmse"):
+        values = np.array([fold[metric_name] for fold in fold_metrics])
+        summary[metric_name] = {
+            "mean": float(values.mean()),
+            "std": float(values.std(ddof=1)),
+        }
+    return summary
 
-    metrics = evaluate_model(model, X_test, y_test)
+
+def train_model(csv_path: str | Path = PROJECT_ROOT / "data" / "salaries.csv",
+                n_rows: int = 1000) -> dict:
+    """Train with leakage-free preprocessing and evaluate on held-out data."""
+    raw_df = load_dataset(csv_path=str(csv_path), n_rows=n_rows)
+    labeled_df = raw_df.dropna(subset=["Salary"]).copy()
+    dropped = len(raw_df) - len(labeled_df)
+    if dropped:
+        print(f"[train] Dropped {dropped} rows with missing target salaries.")
+
+    role_counts = labeled_df["Role"].value_counts()
+    stratify = labeled_df["Role"] if role_counts.min() >= 2 else None
+    train_df, test_df = train_test_split(
+        labeled_df,
+        test_size=TEST_SIZE,
+        random_state=RANDOM_STATE,
+        stratify=stratify,
+    )
+
+    artifacts = build_preprocessor(train_df)
+    X_train = transform_features(train_df, artifacts)
+    X_test = transform_features(test_df, artifacts)
+    y_train = train_df["Salary"]
+    y_test = test_df["Salary"]
+
+    print(f"[train] Train set: {len(train_df)} rows | Test set: {len(test_df)} rows")
+    model = LinearRegression().fit(X_train, y_train)
+    predictions = model.predict(X_test)
+    metrics = _regression_metrics(y_test, predictions)
+
+    baseline = DummyRegressor(strategy="mean").fit(X_train, y_train)
+    metrics["baseline"] = _regression_metrics(y_test, baseline.predict(X_test))
+    metrics["cross_validation"] = cross_validate_model(labeled_df)
+    metrics["by_role"] = {}
+    for role in sorted(test_df["Role"].unique()):
+        mask = test_df["Role"].eq(role).to_numpy()
+        metrics["by_role"][role] = {
+            "count": int(mask.sum()),
+            "mae": float(mean_absolute_error(y_test.iloc[mask], predictions[mask])),
+        }
 
     print("\n[train] === Test Set Performance ===")
-    print(f"    R^2 Score : {metrics['r2_score']:.4f}")
-    print(f"    MAE       : ${metrics['mae']:,.2f}")
-    print(f"    RMSE      : ${metrics['rmse']:,.2f}")
+    print(f"    R^2 Score   : {metrics['r2_score']:.4f}")
+    print(f"    MAE         : ${metrics['mae']:,.2f}")
+    print(f"    RMSE        : ${metrics['rmse']:,.2f}")
+    print(f"    Baseline MAE: ${metrics['baseline']['mae']:,.2f}")
+    cv = metrics["cross_validation"]
+    print(
+        f"    {cv['folds']}-fold CV MAE: ${cv['mae']['mean']:,.2f} "
+        f"(+/- ${cv['mae']['std']:,.2f})"
+    )
 
-    # Show learned coefficients for interpretability.
     print("\n[train] === Learned Coefficients ===")
-    for name, coef in zip(X.columns, model.coef_):
-        print(f"    {name:15s}: {coef:,.2f}")
-    print(f"    {'Intercept':15s}: {model.intercept_:,.2f}")
+    for name, coefficient in zip(X_train.columns, model.coef_):
+        print(f"    {name:30s}: {coefficient:,.2f}")
+    print(f"    {'Intercept':30s}: {model.intercept_:,.2f}")
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, MODEL_PATH)
     joblib.dump(artifacts, ARTIFACTS_PATH)
-    with open(METRICS_PATH, "w") as f:
-        json.dump(metrics, f, indent=2)
+    with METRICS_PATH.open("w", encoding="utf-8") as metrics_file:
+        json.dump(metrics, metrics_file, indent=2)
 
-    print(f"\n[train] Model saved to '{MODEL_PATH}'")
-    print(f"[train] Preprocessing artifacts saved to '{ARTIFACTS_PATH}'")
-    print(f"[train] Metrics saved to '{METRICS_PATH}'")
-
+    print(f"\n[train] Saved model artifacts under '{MODEL_DIR}'.")
     return metrics
 
 
