@@ -129,10 +129,30 @@ It covers deterministic data generation, schema validation, removal of missing
 targets, train-fitted imputation, interaction features, invalid prediction
 inputs, and single/batch inference.
 
+## Analysis and model comparison
+
+Generate the EDA figures, prediction diagnostics, and leakage-free five-fold
+comparison of Linear Regression, Ridge Regression, Random Forest, and Gradient
+Boosting:
+
+```bash
+python3 src/analyze.py
+```
+
+Outputs are written to `reports/`:
+
+- `analysis_report.md` — ready-to-use academic results and interpretation
+- `analysis_summary.json` — machine-readable summary
+- `model_comparison_folds.csv` — metrics for every model and fold
+- `figures/distributions.png`
+- `figures/salary_by_role.png`
+- `figures/salary_vs_experience.png`
+- `figures/model_comparison.png`
+- `figures/actual_vs_predicted.png`
+- `figures/residuals.png`
+
 ## Future academic work
 
-- Add actual-versus-predicted and residual plots.
-- Compare the interaction model with Ridge, Random Forest, and Gradient Boosting.
 - Add real or publicly available salary data with suitable ethical safeguards.
 - Explore additional features such as location, education, skills, and company size.
 - Report prediction intervals and study model uncertainty.

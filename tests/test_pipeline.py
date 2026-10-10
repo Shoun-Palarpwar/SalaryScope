@@ -4,11 +4,18 @@ import unittest
 import pandas as pd
 
 from src.data_loader import generate_synthetic_dataset, validate_dataset
+from src.analyze import get_candidate_models
 from src.predict import _validate_prediction_records, predict_batch, predict_salary
 from src.preprocess import build_preprocessor, preprocess_data, transform_features
 
 
 class PipelineTests(unittest.TestCase):
+    def test_analysis_compares_expected_models(self):
+        self.assertEqual(
+            set(get_candidate_models()),
+            {"Linear Regression", "Ridge Regression", "Random Forest", "Gradient Boosting"},
+        )
+
     def test_synthetic_dataset_is_reproducible_and_valid(self):
         first = generate_synthetic_dataset(n_rows=100, seed=7)
         second = generate_synthetic_dataset(n_rows=100, seed=7)
