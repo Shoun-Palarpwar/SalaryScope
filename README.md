@@ -1,5 +1,23 @@
 # SalaryScope: Employee Salary Prediction System
 
+## Website
+
+Run `python3 website.py` and open http://127.0.0.1:5050 after installing
+`requirements.txt`. The local Flask server connects the frontend to the saved
+Linear Regression model; the website does not retrain or replace artifacts.
+
+The website includes an editorial home page, salary explorer with exact feature
+contributions, interactive role-filtered data visualization, model explanations,
+and a **Behind SalaryScope** navigation tab with the full academic study. Its
+eight-part presentation supports arrow-key navigation. The report's print button
+opens the browser's print dialog, where it can be saved as PDF. CSV downloads
+provide the source dataset and fold metrics. Layouts adapt to narrow screens.
+
+The Ridge diagnostic charts describe cross-validation and are labeled separately
+from the deployed Linear Regression model. Google Fonts are optional; system
+font fallbacks work offline. This server binds locally and is intended for an
+academic demonstration, not public hosting.
+
 SalaryScope is an academic, end-to-end machine-learning project that predicts
 annual employee salary from years of experience and job role. It demonstrates
 data validation, leakage-free preprocessing, regression modeling, evaluation,
